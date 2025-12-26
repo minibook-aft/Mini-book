@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>MiniBook</title>
+
+<style>
+body{margin:0;background:#18191a;font-family:Arial;color:#e4e6eb}
+header{background:#242526;padding:12px 20px;font-size:22px;font-weight:bold;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0}
+header .actions button{margin-left:8px}
+button{background:#2d88ff;border:none;padding:6px 12px;border-radius:6px;color:white;font-weight:bold;cursor:pointer}
+.container{max-width:600px;margin:auto;padding:20px}
+.post{background:#242526;border-radius:8px;margin-bottom:20px;box-shadow:0 0 0 1px #3a3b3c}
+.post-header{padding:12px;font-weight:bold;display:flex;justify-content:space-between}
+.post img{width:100%}
+.post-footer{padding:10px;border-top:1px solid #3a3b3c}
+.likes{cursor:pointer;color:#2d88ff;font-weight:bold;margin-bottom:6px}
+.comment{font-size:14px;margin:4px 0}
+.comment small{opacity:.6;margin-left:6px;cursor:pointer}
+.comment-input{width:100%;padding:6px;border-radius:6px;border:none;background:#3a3b3c;color:white;margin-top:6px}
+footer{text-align:center;padding:15px;font-size:13px;opacity:.6}
+.modal{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);display:none;justify-content:center;align-items:center}
+.modal-box{background:#242526;padding:30px;border-radius:10px;width:300px;text-align:center}
+.google{background:white;color:black}
+.close{background:#3a3b3c}
+</style>
+</head>
+
+<body>
+
+<header>
+MiniBook
+<div class="actions">
+  <button onclick="openUpload()" id="uploadBtn" style="display:none">Subir foto</button>
+  <button onclick="openLogin()" id="loginBtn">Registrarte</button>
+  <button onclick="logout()" id="logoutBtn" style="display:none">Salir</button>
+</div>
+</header>
+
+<div class="container" id="feed"></div>
+<footer>Feed público · Regístrate para interactuar</footer>
+
+<!-- MODALES -->
+<div class="modal" id="loginModal">
+  <div class="modal-box">
+    <h2>Únete a MiniBook</h2>
+    <button class="google" onclick="loginGoogle()">Google</button>
+    <button class="close" onclick="closeLogin()">Cerrar</button>
+  </div>
+</div>
+
+<div class="modal" id="uploadModal">
+  <div class="modal-box">
+    <h2>Subir foto</h2>
+    <input type="file" id="photo" accept="image/*"><br><br>
+    <button onclick="uploadPhoto()">Publicar</button>
+    <button class="close" onclick="closeUpload()">Cancelar</button>
+  </div>
+</div>
+
+<!-- FIREBASE -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
+<script>
+firebase.initializeApp({
+  apiKey: "AIzaSyAOmVcy71SktAdnQkmyT_tgrlECQt7g-7g",
+  authDomain: "flutter-ai-playground-1c5a3.firebaseapp.com",
+  projectId: "flutter-ai-playground-1c5a3"
+});
+
+const auth = firebase.auth();
+const db = firebase.firestore();
+const feed = document.getElementById("feed");
+
+function openLogin(){loginModal.style.display="flex"}
+function closeLogin(){loginModal.style.display="none"}
+function openUpload(){uploadModal.style.display="flex"}
+function closeUpload(){uploadModal.style.display="none"}
+function logout(){auth.signOut()}
+
+function loginGoogle(){
+  auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).then(closeLogin);
+}
+
+function uploadPhoto(){
+  const u = auth.currentUser;
+  if(!u || !photo.files[0]) return;
+
+  const data = new FormData();
+  data.append("file", photo.files[0]);
+  data.append("upload_preset", "minibook_unsigned");
+
+  fetch("https://api.cloudinary.com/v1_1/dn1nd0sks/image/upload",{method:"POST",body:data})
+  .then(r=>r.json())
+  .then(img=>{
+    db.collection("posts").add({
+      url: img.secure_url,
+      user: u.displayName || u.email,
+      uid: u.uid,
+      likes: [],
+      time: Date.now()
+    });
+  });
+  closeUpload();
+}
+
+function toggleLike(id, likes){
+  const u = auth.currentUser;
+  if(!u) return;
+  const ref = db.collection("posts").doc(id);
+  likes.includes(u.uid)
+   ? ref.update({likes: firebase.firestore.FieldValue.arrayRemove(u.uid)})
+   : ref.update({likes: firebase.firestore.FieldValue.arrayUnion(u.uid)});
+}
+
+function deletePost(id){
+  if(confirm("¿Borrar esta publicación?")){
+    db.collection("posts").doc(id).delete();
+  }
+}
+
+function addComment(pid,input){
+  const u = auth.currentUser;
+  if(!u || !input.value) return;
+  db.collection("posts").doc(pid).collection("comments").add({
+    user: u.displayName || u.email,
+    uid: u.uid,
+    text: input.value,
+    time: Date.now()
+  });
+  input.value="";
+}
+
+function deleteComment(pid,cid){
+  db.collection("posts").doc(pid).collection("comments").doc(cid).delete();
+}
+
+function editComment(pid,cid,old){
+  const t = prompt("Editar comentario:",old);
+  if(t) db.collection("posts").doc(pid).collection("comments").doc(cid).update({text:t});
+}
+
+db.collection("posts").orderBy("time","desc").onSnapshot(s=>{
+  feed.innerHTML="";
+  s.forEach(doc=>{
+    const d = doc.data();
+    const u = auth.currentUser;
+    const liked = u && d.likes.includes(u.uid);
+
+    feed.innerHTML+=`
+    <div class="post">
+      <div class="post-header">
+        👤 ${d.user}
+        ${u && u.uid===d.uid ? `<small onclick="deletePost('${doc.id}')">🗑️</small>` : ""}
+      </div>
+      <img src="${d.url}">
+      <div class="post-footer">
+        <div class="likes" onclick='toggleLike("${doc.id}",${JSON.stringify(d.likes)})'>
+          ${liked?"❤️":"🤍"} ${d.likes.length}
+        </div>
+        <div id="c-${doc.id}"></div>
+        <input class="comment-input" placeholder="Comenta..."
+        onkeydown="if(event.key==='Enter')addComment('${doc.id}',this)">
+      </div>
+    </div>`;
+
+    db.collection("posts").doc(doc.id).collection("comments").orderBy("time")
+    .onSnapshot(cs=>{
+      const box=document.getElementById("c-"+doc.id);
+      if(!box) return;
+      box.innerHTML="";
+      cs.forEach(cm=>{
+        const c=cm.data();
+        box.innerHTML+=`
+        <div class="comment">
+          <b>${c.user}:</b> ${c.text}
+          ${u && u.uid===c.uid ? `
+          <small onclick="editComment('${doc.id}','${cm.id}','${c.text.replace(/'/g,"")}')">✏️</small>
+          <small onclick="deleteComment('${doc.id}','${cm.id}')">🗑️</small>`:""}
+        </div>`;
+      });
+    });
+  });
+});
+
+auth.onAuthStateChanged(u=>{
+  loginBtn.style.display=u?"none":"inline-block";
+  logoutBtn.style.display=u?"inline-block":"none";
+  uploadBtn.style.display=u?"inline-block":"none";
+});
+</script>
+
+</body>
+</html>
